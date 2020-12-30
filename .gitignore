@@ -56,3 +56,8 @@ CMakeCache.txt
 .ccls-cache
 .log
 compile_commands.json
+bld_a/
+bld_u/
+.cproject
+.project
+.vscode/

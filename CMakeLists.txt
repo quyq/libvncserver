@@ -526,6 +526,7 @@ set(LIBVNCSERVER_EXAMPLES
     cursors
     colourmaptest
     example
+    fb_test
     fontsel
     pnmshow
     pnmshow24

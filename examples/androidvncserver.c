@@ -45,9 +45,9 @@
 /*****************************************************************************/
 
 /* Android does not use /dev/fb0. */
-#define FB_DEVICE "/dev/graphics/fb0"
-static char KBD_DEVICE[256] = "/dev/input/event3";
-static char TOUCH_DEVICE[256] = "/dev/input/event1";
+static char FB_DEVICE[256] = "/dev/graphics/fb0";
+static char KBD_DEVICE[256] = "/dev/input/event9";
+static char TOUCH_DEVICE[256] = "/dev/input/event3";
 static struct fb_var_screeninfo scrinfo;
 static int fbfd = -1;
 static int kbdfd = -1;
@@ -145,28 +145,125 @@ static void cleanup_kbd()
 	}
 }
 
+// code from https://github.com/wlach/orangutan orng.c
+#define test_bit(bit, array)    (array[bit/8] & (1<<(bit%8)))
+enum {
+  /* The input device is a touchscreen or a touchpad (either single-touch or multi-touch). */
+  INPUT_DEVICE_CLASS_TOUCH         = 0x00000004,
+
+  /* The input device is a multi-touch touchscreen. */
+  INPUT_DEVICE_CLASS_TOUCH_MT      = 0x00000010,
+
+  /* The input device is a multi-touch touchscreen and needs MT_SYNC. */
+  INPUT_DEVICE_CLASS_TOUCH_MT_SYNC = 0x00000200
+};
+
+static uint32_t figure_out_events_device_reports(int fd) {
+
+  uint32_t device_classes = 0;
+
+  uint8_t key_bitmask[KEY_CNT / 8 + !!(KEY_CNT % 8)];
+  uint8_t abs_bitmask[ABS_CNT / 8 + !!(ABS_CNT % 8)];
+
+  memset(key_bitmask, 0, sizeof(key_bitmask));
+  memset(abs_bitmask, 0, sizeof(abs_bitmask));
+
+  ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(key_bitmask)), key_bitmask);
+  ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(abs_bitmask)), abs_bitmask);
+
+  // See if this is a touch pad.
+  // Is this a new modern multi-touch driver?
+  if (test_bit(ABS_MT_POSITION_X, abs_bitmask)
+      && test_bit(ABS_MT_POSITION_Y, abs_bitmask)) {
+    // Some joysticks such as the PS3 controller report axes that conflict
+    // with the ABS_MT range.  Try to confirm that the device really is
+    // a touch screen.
+    // Mozilla Bug 741038 - support GB touchscreen drivers
+    //if (test_bit(BTN_TOUCH, device->keyBitmask) || !haveGamepadButtons) {
+    device_classes |= INPUT_DEVICE_CLASS_TOUCH | INPUT_DEVICE_CLASS_TOUCH_MT;
+    char device_name[80];
+
+    if(ioctl(fd, EVIOCGNAME(sizeof(device_name) - 1), &device_name) < 1) {
+      //fprintf(stderr, "could not get device name for %s, %s\n", device, strerror(errno));
+      device_name[0] = '\0';
+    }
+
+    // some touchscreen devices expect MT_SYN events to be sent after every
+    // touch
+    if(strcmp(device_name, "atmel-touchscreen") == 0 ||
+       strcmp(device_name, "nvodm_touch") == 0 ||
+       strcmp(device_name, "elan-touchscreen") == 0 ||
+       strcmp(device_name, "ft5x06_ts") == 0) {
+      device_classes |= INPUT_DEVICE_CLASS_TOUCH_MT_SYNC;
+    }
+
+  // Is this an old style single-touch driver?
+  } else if ((test_bit(BTN_TOUCH, key_bitmask)
+              && test_bit(ABS_X, abs_bitmask)
+              && test_bit(ABS_Y, abs_bitmask))) {
+    device_classes |= INPUT_DEVICE_CLASS_TOUCH;
+  }
+
+  return device_classes;
+}
+
+static void probe_touch()
+{
+    struct input_absinfo info;
+	char i = '0';
+
+	strcpy(TOUCH_DEVICE, "/dev/input/event0");
+	for (i='0'; i<='9'; i++) {
+		TOUCH_DEVICE[16] = i;
+    	if((touchfd = open(TOUCH_DEVICE, O_RDWR)) == -1)
+			printf("Cannot open touch device %s\n", TOUCH_DEVICE);
+		else {
+			printf("Probe device %s: class=0x%x\n", TOUCH_DEVICE, figure_out_events_device_reports(touchfd));
+			info.maximum = -1; //mark for invalid
+    		if(ioctl(touchfd, EVIOCGABS(ABS_X), &info)) {
+				printf("\tABS_X not supported! %s\n", strerror(errno));
+				if(ioctl(touchfd, EVIOCGABS(ABS_MT_POSITION_X), &info)) {
+					printf("\tABS_MT_POSTION_X not supported! %s\n", strerror(errno));
+				}
+			}
+			if(info.maximum != -1)
+				printf("\tx_min = %d, x_max = %d\n", info.minimum, info.maximum);
+
+			info.maximum = -1; //mark for invalid
+    		if(ioctl(touchfd, EVIOCGABS(ABS_Y), &info)) {
+				printf("\tABS_Y not supported! %s\n", strerror(errno));
+				if(ioctl(touchfd, EVIOCGABS(ABS_MT_POSITION_Y), &info)) {
+					printf("\tABS_MT_POSTION_Y not supported! %s\n", strerror(errno));
+				}
+			}
+			if(info.maximum != -1)
+				printf("\ty_min = %d, y_max = %d\n", info.minimum, info.maximum);
+			close(touchfd);
+		}
+	}
+}
+
 static void init_touch()
 {
     struct input_absinfo info;
-        if((touchfd = open(TOUCH_DEVICE, O_RDWR)) == -1)
-        {
-                printf("cannot open touch device %s\n", TOUCH_DEVICE);
-                exit(EXIT_FAILURE);
-        }
+    if((touchfd = open(TOUCH_DEVICE, O_RDWR)) == -1)
+    {
+        printf("cannot open touch device %s\n", TOUCH_DEVICE);
+        exit(EXIT_FAILURE);
+    }
     // Get the Range of X and Y
-    if(ioctl(touchfd, EVIOCGABS(ABS_X), &info)) {
+    if(ioctl(touchfd, EVIOCGABS(ABS_X), &info) && ioctl(touchfd, EVIOCGABS(ABS_MT_POSITION_X), &info)) {
         printf("cannot get ABS_X info, %s\n", strerror(errno));
         exit(EXIT_FAILURE);
     }
     xmin = info.minimum;
     xmax = info.maximum;
-    if(ioctl(touchfd, EVIOCGABS(ABS_Y), &info)) {
+    if(ioctl(touchfd, EVIOCGABS(ABS_Y), &info) && ioctl(touchfd, EVIOCGABS(ABS_MT_POSITION_Y), &info)) {
         printf("cannot get ABS_Y, %s\n", strerror(errno));
         exit(EXIT_FAILURE);
     }
     ymin = info.minimum;
     ymax = info.maximum;
-
 }
 
 static void cleanup_touch()
@@ -282,10 +379,10 @@ static int keysym2scancode(rfbBool down, rfbKeySym key, rfbClientPtr cl)
             case 0xFF1B:    scancode = KEY_BACK;        break;
             case 0xFF09:    scancode = KEY_TAB;         break;
             case 0xFF0D:    scancode = KEY_ENTER;       break;
-            case 0xFFBE:    scancode = KEY_F1;        break; // F1
-            case 0xFFBF:    scancode = KEY_F2;         break; // F2
-            case 0xFFC0:    scancode = KEY_F3;        break; // F3
-            case 0xFFC5:    scancode = KEY_F4;       break; // F8
+            case 0xFFBE:    scancode = KEY_F1;          break; // F1
+            case 0xFFBF:    scancode = KEY_F2;          break; // F2
+            case 0xFFC0:    scancode = KEY_F3;          break; // F3
+            case 0xFFC5:    scancode = KEY_F4;          break; // F8
             case 0xFFC8:    rfbShutdownServer(cl->screen,TRUE);       break; // F11            
         }
     }
@@ -457,9 +554,11 @@ static void update_screen(void)
 
 void print_usage(char **argv)
 {
-	printf("%s [-k device] [-t device] [-h]\n"
-		"-k device: keyboard device node, default is /dev/input/event3\n"
-		"-t device: touch device node, default is /dev/input/event1\n"
+	printf("%s [-f device] [-k device] [-t device] [-p] [-h]\n"
+		"-f device: framebuffer device node, default is /dev/graphics/fb0\n"
+		"-k device: keyboard device node, default is /dev/input/event9\n"
+		"-t device: touch device node, default is /dev/input/event3\n"
+		"-p : probe touch device with /dev/input/eventN, where N=0..9\n"
 		"-h : print this help\n", argv[0]);
 }
 
@@ -478,6 +577,10 @@ int main(int argc, char **argv)
 						print_usage(argv);
 						exit(0);
 						break;
+					case 'f':
+						i++;
+						strcpy(FB_DEVICE, argv[i]);
+						break;
 					case 'k':
 						i++;
 						strcpy(KBD_DEVICE, argv[i]);
@@ -486,13 +589,16 @@ int main(int argc, char **argv)
 						i++;
 						strcpy(TOUCH_DEVICE, argv[i]);
 						break;
+					case 'p':
+						probe_touch();
+						exit(0);
 				}
 			}
 			i++;
 		}
 	}
 
-	printf("Initializing framebuffer device " FB_DEVICE "...\n");
+	printf("Initializing framebuffer device %s ...\n", FB_DEVICE);
 	init_fb();
 	printf("Initializing keyboard device %s ...\n", KBD_DEVICE);
 	init_kbd();
