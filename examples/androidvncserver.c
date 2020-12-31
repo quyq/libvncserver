@@ -43,6 +43,16 @@
 #include "rfb/keysym.h"
 
 /*****************************************************************************/
+/* Key define from Android */
+#define AKEYCODE_HOME 3
+#define AKEYCODE_BACK 4
+#define AKEYCODE_VOLUME_UP 24
+#define AKEYCODE_VOLUME_DOWN 25
+#define AKEYCODE_POWER 26
+#define AKEYCODE_CAMERA 27
+#define AKEYCODE_CLEAR 28
+#define AKEYCODE_ENTER 66
+#define AKEYCODE_MENU 82
 
 /* Android does not use /dev/fb0. */
 static char FB_DEVICE[256] = "/dev/graphics/fb0";
@@ -220,7 +230,7 @@ static uint32_t figure_out_events_device_reports(int fd) {
 // probe code added by me
 static void probe_touch()
 {
-    struct input_absinfo info;
+	struct input_absinfo info;
 	char i = '0';
 
 	strcpy(TOUCH_DEVICE, "/dev/input/event0");
@@ -401,12 +411,11 @@ static int keysym2scancode(rfbBool down, rfbKeySym key, rfbClientPtr cl)
 			case 0xFFBF:    scancode = KEY_F2;          break; // F2
 			case 0xFFC0:    scancode = KEY_F3;          break; // F3
 			case 0xFFC1:    scancode = KEY_F4;          break; // F4
-			case 0xFFC2:    scancode = 3;               break; // F5 => AKEYCODE_HOME
-			case 0xFFC3:    scancode = 4;               break; // F6 => AKEYCODE_BACK
-			case 0xFFC4:    scancode = 26;              break; // F7 => AKEYCODE_POWER
-			case 0xFFC5:    scancode = 66;              break; // F8 => AKEYCODE_ENTER
-			case 0xFFC6:    scancode = 82;              break; // F9 => AKEYCODE_MENU => UNLOCK
-			case 0xFFC7:    scancode = 87;              break; // F10 => POWER_WAKE?
+			case 0xFFC2:    scancode = AKEYCODE_HOME;   break; // F5 => HOME
+			case 0xFFC3:    scancode = AKEYCODE_BACK;   break; // F6 => BACK
+			case 0xFFC4:    scancode = AKEYCODE_POWER;  break; // F7 => POWER
+			case 0xFFC5:    scancode = AKEYCODE_ENTER;  break; // F8 => ENTER
+			case 0xFFC6:    scancode = AKEYCODE_MENU;   break; // F9 => UNLOCK
 			case 0xFFC8:    rfbShutdownServer(cl->screen,TRUE);       break; // F11            
 		}
 	}
@@ -566,11 +575,12 @@ static void update_screen(void)
 
 void print_usage(char **argv)
 {
-	printf("%s [-f device] [-k device] [-t device] [-p] [-h]\n"
+	printf("%s [-f device] [-k device] [-t device] [-p] [-P code] [-h]\n"
 		"-f device: framebuffer device node, default is /dev/graphics/fb0\n"
 		"-k device: keyboard device node, default is /dev/input/event9\n"
 		"-t device: touch device node, default is /dev/input/event3\n"
 		"-p : probe touch device with /dev/input/eventN, where N=0..9\n"
+		"-P : send code to key device\n"
 		"-h : print this help\n", argv[0]);
 }
 
@@ -604,6 +614,17 @@ int main(int argc, char **argv)
 					case 'p':
 						probe_touch();
 						exit(0);
+					case 'P':
+					{
+						i++;
+						uint32_t code = atoi(argv[i]);
+						printf("Sending code=%d to device %s ...\n", code, KBD_DEVICE);
+						init_kbd();
+						injectKeyEvent(code, 1);
+						sleep(1);
+						injectKeyEvent(code, 0);
+						exit(0);
+					}
 				}
 			}
 			i++;
