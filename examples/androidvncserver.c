@@ -54,6 +54,14 @@ static int kbdfd = -1;
 static int touchfd = -1;
 static uint32_t touch_device_flags = 0;
 static int global_tracking_id = 1;
+static uint32_t touch_btn_state = 0;
+struct timespec last_move_time;
+int sample_interval_in_ms = 20;    // sample interval of touch press
+enum {
+	TOUCH_UP   = 0,
+	TOUCH_DOWN =1,
+	TOUCH_MOVE =2
+};
 static unsigned short int *fbmmap = MAP_FAILED;
 static unsigned short int *vncbuf;
 static unsigned short int *fbbuf;
@@ -268,6 +276,7 @@ static void init_touch()
 	}
 	ymin = info.minimum;
 	ymax = info.maximum;
+	clock_gettime(CLOCK_MONOTONIC, &last_move_time);
 }
 
 static void cleanup_touch()
@@ -417,7 +426,7 @@ static void keyevent(rfbBool down, rfbKeySym key, rfbClientPtr cl)
 	}
 }
 
-void injectTouchEvent(int down, int x, int y)
+void injectTouchEvent(int action, int x, int y)   //action: 0-release, 1-down, 2-move
 {
 	// Calculate the final x and y
 	/* Fake touch screen always reports zero */
@@ -428,23 +437,32 @@ void injectTouchEvent(int down, int x, int y)
 	}
 
 	if (touch_device_flags & INPUT_DEVICE_CLASS_TOUCH_MT) {
-		write_event(touchfd, EV_ABS, ABS_MT_TRACKING_ID, global_tracking_id++);
-		write_event(touchfd, EV_ABS, ABS_MT_POSITION_X, x);
-		write_event(touchfd, EV_ABS, ABS_MT_POSITION_Y, y);
-		write_event(touchfd, EV_ABS, ABS_MT_PRESSURE, 127);
-		write_event(touchfd, EV_ABS, ABS_MT_TOUCH_MAJOR, 127);
-		write_event(touchfd, EV_ABS, ABS_MT_WIDTH_MAJOR, 4);  // optional?
-		if (touch_device_flags & INPUT_DEVICE_CLASS_TOUCH_MT_SYNC)
+		if(action == TOUCH_UP)
+			write_event(touchfd, EV_ABS, ABS_MT_TRACKING_ID, -1);
+		else {
+			if (action == TOUCH_DOWN)
+				write_event(touchfd, EV_ABS, ABS_MT_TRACKING_ID, global_tracking_id++);
+			write_event(touchfd, EV_ABS, ABS_MT_POSITION_X, x);
+			write_event(touchfd, EV_ABS, ABS_MT_POSITION_Y, y);
+			write_event(touchfd, EV_ABS, ABS_MT_PRESSURE, 127);
+			write_event(touchfd, EV_ABS, ABS_MT_TOUCH_MAJOR, 127);
+			write_event(touchfd, EV_ABS, ABS_MT_WIDTH_MAJOR, 4);  // optional?
+		}
+		if (touch_device_flags & INPUT_DEVICE_CLASS_TOUCH_MT_SYNC) 
 			write_event(touchfd, EV_SYN, SYN_MT_REPORT, 0);
-		write_event(touchfd, EV_KEY, BTN_TOUCH, 1);
+		if (action != TOUCH_MOVE)
+			write_event(touchfd, EV_KEY, BTN_TOUCH, action);
 		write_event(touchfd, EV_SYN, SYN_REPORT, 0);
 	} else if (touch_device_flags & INPUT_DEVICE_CLASS_TOUCH) {
-		write_event(touchfd, EV_KEY, BTN_TOUCH, down);
-		write_event(touchfd, EV_ABS, ABS_X, x);
-		write_event(touchfd, EV_ABS, ABS_Y, y);
+		if (action != TOUCH_MOVE)
+			write_event(touchfd, EV_KEY, BTN_TOUCH, action);
+		if(action != TOUCH_UP){
+			write_event(touchfd, EV_ABS, ABS_X, x);
+			write_event(touchfd, EV_ABS, ABS_Y, y);
+		}
 		write_event(touchfd, EV_SYN, SYN_REPORT, 0);
 	}
-	printf("injectTouchEvent (x=%d, y=%d, down=%d)\n", x , y, down);
+	printf("injectTouchEvent (x=%d, y=%d, action=%d)\n", x , y, action);
 }
 
 static void ptrevent(int buttonMask, int x, int y, rfbClientPtr cl)
@@ -459,11 +477,17 @@ static void ptrevent(int buttonMask, int x, int y, rfbClientPtr cl)
 	From (no longer available): http://www.vislab.usyd.edu.au/blogs/index.php/2009/05/22/an-headerless-indexed-protocol-for-input-1?blog=61 */
 	
 	//printf("Got ptrevent: %04x (x=%d, y=%d)\n", buttonMask, x, y);
-	if(buttonMask & 1) {
-		// Simulate left mouse event as touch event
-		injectTouchEvent(1, x, y);
-		injectTouchEvent(0, x, y);
-	} 
+	if (touch_btn_state != buttonMask) {
+		injectTouchEvent(buttonMask & 1, x, y); // Simulate left mouse event as touch event
+	} else if(buttonMask & 1) {  //only track motion if button is down; sample with interval to avoid sending flooding touch event
+		struct timespec current_time;
+		clock_gettime(CLOCK_MONOTONIC, &current_time);
+		if((((current_time.tv_sec - last_move_time.tv_sec)*1000.0) + 1e-6 * (current_time.tv_nsec - last_move_time.tv_nsec)) > sample_interval_in_ms) {
+			injectTouchEvent(TOUCH_MOVE, x, y);
+			last_move_time = current_time;
+		}
+	}
+	touch_btn_state = buttonMask;
 }
 
 #define PIXEL_FB_TO_RFB(p,r,g,b) ((p>>r)&0x1f001f)|(((p>>g)&0x1f001f)<<5)|(((p>>b)&0x1f001f)<<10)
