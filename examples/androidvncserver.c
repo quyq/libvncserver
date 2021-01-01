@@ -357,8 +357,14 @@ void write_event(int fd, int type, int code, int value)
 
 void injectKeyEvent(uint16_t code, uint16_t value)
 {
-	write_event(kbdfd, EV_KEY, code, value);
-	printf("injectKey (%d, %d)\n", code , value);    
+	/* inject KeyEvent via /dev/input/eventN does not work as expected. So use shell 'input keyevent' cmd to simulate key down
+	write_event(kbdfd, EV_KEY, code, value);*/
+	printf("injectKey (%d, %d)\n", code , value);
+	if (value) {
+		char buffer [32];
+		sprintf(buffer, "input keyevent %d", code);
+		system(buffer);
+	}
 }
 
 static int keysym2scancode(rfbBool down, rfbKeySym key, rfbClientPtr cl)
@@ -413,9 +419,9 @@ static int keysym2scancode(rfbBool down, rfbKeySym key, rfbClientPtr cl)
 			case 0xFFC1:    scancode = KEY_F4;          break; // F4
 			case 0xFFC2:    scancode = AKEYCODE_HOME;   break; // F5 => HOME
 			case 0xFFC3:    scancode = AKEYCODE_BACK;   break; // F6 => BACK
-			case 0xFFC4:    scancode = AKEYCODE_POWER;  break; // F7 => POWER
+			case 0xFFC4:    scancode = AKEYCODE_MENU;   break; // F7 => MENU/UNLOCK
 			case 0xFFC5:    scancode = AKEYCODE_ENTER;  break; // F8 => ENTER
-			case 0xFFC6:    scancode = AKEYCODE_MENU;   break; // F9 => UNLOCK
+			case 0xFFC6:    scancode = AKEYCODE_POWER;  break; // F9 => POWER
 			case 0xFFC8:    rfbShutdownServer(cl->screen,TRUE);       break; // F11            
 		}
 	}
