@@ -44,20 +44,41 @@
 
 /*****************************************************************************/
 /* Key define from Android */
-#define AKEYCODE_HOME 3
-#define AKEYCODE_BACK 4
-#define AKEYCODE_VOLUME_UP 24
+#define AKEYCODE_HOME        3
+#define AKEYCODE_BACK        4
+#define AKEYCODE_0           7
+#define AKEYCODE_STAR        17
+#define AKEYCODE_POUND       18
+#define AKEYCODE_VOLUME_UP   24
 #define AKEYCODE_VOLUME_DOWN 25
-#define AKEYCODE_POWER 26
-#define AKEYCODE_CAMERA 27
-#define AKEYCODE_CLEAR 28
-#define AKEYCODE_ENTER 66
-#define AKEYCODE_MENU 82
+#define AKEYCODE_POWER       26
+#define AKEYCODE_CAMERA      27
+#define AKEYCODE_CLEAR       28
+#define AKEYCODE_A           29
+#define AKEYCODE_COMMA       55
+#define AKEYCODE_PERIOD      56
+#define AKEYCODE_SHIFT_LEFT  59
+#define AKEYCODE_SHIFT_RIGHT 60
+#define AKEYCODE_TAB         61
+#define AKEYCODE_SPACE       62
+#define AKEYCODE_ENTER       66
+#define AKEYCODE_DEL         67
+#define AKEYCODE_GRAVE       68
+#define AKEYCODE_MINUS       69
+#define AKEYCODE_EQUALS      70
+#define AKEYCODE_LEFT_BRACKET  71
+#define AKEYCODE_RIGHT_BRACKET 72
+#define AKEYCODE_BACKSLASH   73
+#define AKEYCODE_SEMICOLON   74
+#define AKEYCODE_APOSTROPHE  75
+#define AKEYCODE_SLASH       76
+#define AKEYCODE_AT          77
+#define AKEYCODE_MENU        82
 
 /* Android does not use /dev/fb0. */
 static char FB_DEVICE[256] = "/dev/graphics/fb0";
 static char KBD_DEVICE[256] = "/dev/input/event9";
-static char TOUCH_DEVICE[256] = "/dev/input/event3";
+static char TOUCH_DEVICE[256] = "*";
 static struct fb_var_screeninfo scrinfo;
 static int fbfd = -1;
 static int kbdfd = -1;
@@ -228,10 +249,11 @@ static uint32_t figure_out_events_device_reports(int fd) {
 }
 
 // probe code added by me
-static void probe_touch()
+static void probe_touch(int find)
 {
 	struct input_absinfo info;
 	char i = '0';
+	uint32_t touch_type;
 
 	strcpy(TOUCH_DEVICE, "/dev/input/event0");
 	for (i='0'; i<='9'; i++) {
@@ -239,7 +261,8 @@ static void probe_touch()
     	if((touchfd = open(TOUCH_DEVICE, O_RDWR)) == -1)
 			printf("Cannot open touch device %s\n", TOUCH_DEVICE);
 		else {
-			printf("Probe device %s: class=0x%x\n", TOUCH_DEVICE, figure_out_events_device_reports(touchfd));
+			touch_type = figure_out_events_device_reports(touchfd);
+			printf("Probe device %s: class=0x%x\n", TOUCH_DEVICE, touch_type);
 			info.maximum = -1; //mark for invalid
     		if(ioctl(touchfd, EVIOCGABS(ABS_X), &info)) {
 				printf("\tABS_X not supported! %s\n", strerror(errno));
@@ -260,6 +283,7 @@ static void probe_touch()
 			if(info.maximum != -1)
 				printf("\ty_min = %d, y_max = %d\n", info.minimum, info.maximum);
 			close(touchfd);
+			if ((find==1) && (touch_type & INPUT_DEVICE_CLASS_TOUCH)) return; //stop searching
 		}
 	}
 }
@@ -267,6 +291,8 @@ static void probe_touch()
 static void init_touch()
 {
 	struct input_absinfo info;
+	if (TOUCH_DEVICE[0]=='*')
+		probe_touch(1);  // auto detect
 	if((touchfd = open(TOUCH_DEVICE, O_RDWR)) == -1)
 	{
 		printf("cannot open touch device %s\n", TOUCH_DEVICE);
@@ -373,9 +399,10 @@ static int keysym2scancode(rfbBool down, rfbKeySym key, rfbClientPtr cl)
 
 	int code = (int)key;
 	if (code>='0' && code<='9') {
-		scancode = (code & 0xF) - 1;
+		/*scancode = (code & 0xF) - 1;
 		if (scancode<0) scancode += 10;
-		scancode += KEY_1;
+		scancode += KEY_1;*/
+		scancode = (code & 0xF) + AKEYCODE_0;
 	} else if (code>=0xFF50 && code<=0xFF58) {
 		static const uint16_t map[] =
 			{	KEY_HOME, KEY_LEFT, KEY_UP, KEY_RIGHT, KEY_DOWN,
@@ -383,36 +410,38 @@ static int keysym2scancode(rfbBool down, rfbKeySym key, rfbClientPtr cl)
 		scancode = map[code & 0xF];
 	} else if (code>=0xFFE1 && code<=0xFFEE) {
 		static const uint16_t map[] =
-			{	KEY_LEFTSHIFT, KEY_LEFTSHIFT,
+			{	AKEYCODE_SHIFT_LEFT, AKEYCODE_SHIFT_LEFT,
 				KEY_COMPOSE, KEY_COMPOSE,
-				KEY_LEFTSHIFT, KEY_LEFTSHIFT,
+				AKEYCODE_SHIFT_LEFT, AKEYCODE_SHIFT_LEFT,
 				0,0,
 				KEY_LEFTALT, KEY_RIGHTALT,
 				0, 0, 0, 0 };
 		scancode = map[code & 0xF];
 	} else if ((code>='A' && code<='Z') || (code>='a' && code<='z')) {
-		static const uint16_t map[] = {
+		/*static const uint16_t map[] = {
 				KEY_A, KEY_B, KEY_C, KEY_D, KEY_E,
 				KEY_F, KEY_G, KEY_H, KEY_I, KEY_J,
 				KEY_K, KEY_L, KEY_M, KEY_N, KEY_O,
 				KEY_P, KEY_Q, KEY_R, KEY_S, KEY_T,
 				KEY_U, KEY_V, KEY_W, KEY_X, KEY_Y, KEY_Z };
-		scancode = map[(code & 0x5F) - 'A'];
+		scancode = map[(code & 0x5F) - 'A'];*/
+		if (code>='a') scancode = code - 'a' + AKEYCODE_A;  //cannot distingush lower case and capital case yet
+		else  scancode = code - 'A' + AKEYCODE_A;
 	} else {
 		switch (code) {
-			case 0x0020:    scancode = KEY_SPACE;       break;
-			case 0x002C:    scancode = KEY_COMMA;       break;
-			case 0x003C:    scancode = KEY_COMMA;       break;
-			case 0x002E:    scancode = KEY_DOT;         break;
-			case 0x003E:    scancode = KEY_DOT;         break;
-			case 0x002F:    scancode = KEY_SLASH;       break;
-			case 0x003F:    scancode = KEY_SLASH;       break;
+			case 0x0020:    scancode = AKEYCODE_SPACE;  break;
+			case 0x002C:    scancode = AKEYCODE_COMMA;  break;
+			case 0x003C:    scancode = AKEYCODE_COMMA;  break;
+			case 0x002E:    scancode = AKEYCODE_PERIOD; break;
+			case 0x003E:    scancode = AKEYCODE_PERIOD; break;
+			case 0x002F:    scancode = AKEYCODE_SLASH;  break;
+			case 0x003F:    scancode = AKEYCODE_SLASH;  break;
 			case 0x0032:    scancode = KEY_EMAIL;       break;
 			case 0x0040:    scancode = KEY_EMAIL;       break;
-			case 0xFF08:    scancode = KEY_BACKSPACE;   break;
-			case 0xFF1B:    scancode = KEY_BACK;        break;
-			case 0xFF09:    scancode = KEY_TAB;         break;
-			case 0xFF0D:    scancode = KEY_ENTER;       break;
+			case 0xFF08:    scancode = AKEYCODE_DEL;    break;
+			case 0xFF1B:    scancode = AKEYCODE_DEL;    break;
+			case 0xFF09:    scancode = AKEYCODE_TAB;    break;
+			case 0xFF0D:    scancode = AKEYCODE_ENTER;  break;
 			case 0xFFBE:    scancode = KEY_F1;          break; // F1
 			case 0xFFBF:    scancode = KEY_F2;          break; // F2
 			case 0xFFC0:    scancode = KEY_F3;          break; // F3
@@ -618,7 +647,7 @@ int main(int argc, char **argv)
 						strcpy(TOUCH_DEVICE, argv[i]);
 						break;
 					case 'p':
-						probe_touch();
+						probe_touch(0);
 						exit(0);
 					case 'P':
 					{
@@ -639,8 +668,8 @@ int main(int argc, char **argv)
 
 	printf("Initializing framebuffer device %s ...\n", FB_DEVICE);
 	init_fb();
-	printf("Initializing keyboard device %s ...\n", KBD_DEVICE);
-	init_kbd();
+	/*printf("Initializing keyboard device %s ...\n", KBD_DEVICE);
+	init_kbd();*/
 	printf("Initializing touch device %s ...\n", TOUCH_DEVICE);
 	init_touch();
 
